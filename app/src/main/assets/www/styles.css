@@ -197,8 +197,12 @@ body {
     padding: 0;
     background: var(--surface);
     border-radius: 16px;
-    /* 与记录卡片一致：加一条上边缘，和上面的分区标题分得开 */
-    border-top: 1px solid var(--outline);
+    /*
+       ⚠️ 这里**不要**加 `border-top`（原来从记录卡片那套抄过来的）。
+          记录卡片是**无边框的平顶卡片**，加条上边缘是为了和上方内容分开；
+          但设置页是**圆角框卡片**，顶上那条直线会横切圆角、看着像没对齐的残线
+          （用户 2026-09-28 报「比较突兀」）。圆角卡片靠自身的形状就够了。
+    */
     overflow: hidden;
 }
 
@@ -862,16 +866,78 @@ body {
 }
 
 /*
-   滚动条：全局不画（滚动照旧，只是没有滑块）。
-   自定义 `::-webkit-scrollbar` 会让它从「浮动淡出」变成常驻且占 6px 的经典滚动条，
-   颜色还很难在页面/卡片/弹窗各种底色上都合适；移动端习惯直接不显示。
-   `scrollbar-width` 是标准属性（Chromium 121+ / Firefox），`::-webkit-scrollbar` 兜住老内核。
+   滚动条：**所有可滚动容器统一样式**（v0.1.26）
+
+   ⚠️ 这里踩过一轮，两版都试过：
+   - v0.0.x 曾在**滚动容器**（`.sheet` / `.icon-body` 等）上写 `::-webkit-scrollbar`，
+     结果是「常驻 + 占 6px 宽 + 挡内容」，颜色在各底色上也难调好 → 用户否掉，改成全局隐藏。
+   - v0.1.25 菜单又需要滚动条（否则看不出「下面还有选项」），临时只在 `.menu` 里放开，
+     用的是浏览器默认灰条 —— **跟产品风格不一致**（用户 2026-09-28 指出）。
+   现在统一成一套：细轨道 + 圆角胶囊滑块 + 主题内敛灰，**自动淡出**
+   （不滚动时透明、滚动时显现，靠 `.is-scrolling`，见 components.js 的 `watchScrollbars`），
+   所以既不会常驻挡内容，也不会「没有提示」。
+   容器若要隐藏滚动条，加 `.no-scrollbar` 显式覆盖即可。
+   `scrollbar-width` / `scrollbar-color` 是标准属性（Chromium 121+ / Firefox），
+   `::-webkit-scrollbar` 兜住老内核与 Android WebView。
    -------------------------------------------------------------------------- */
+:root {
+    --scrollbar-size: 4px;
+    --scrollbar-thumb: var(--outline);
+    --scrollbar-thumb-active: var(--nav-inactive);
+}
+
 * {
+    scrollbar-width: thin;
+    scrollbar-color: transparent transparent;
+}
+
+/*
+   ⚠️ `scrollbar-gutter: stable` **不要加**：它会让浏览器预留经典滚动条宽度，
+      Chromium 上即使 `::-webkit-scrollbar` 只写 4px，也会预留 **11px**，
+      菜单 160px 里内容只剩 149px —— 右侧空一大块、滑块还挤到圆角里。
+      `scrollbar-gutter: auto`（默认）就不会预留。
+*/
+*::-webkit-scrollbar {
+    width: var(--scrollbar-size);
+    height: var(--scrollbar-size);
+}
+
+*::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+/*
+   ⚠️ 滑块**默认透明**：`::-webkit-scrollbar` 只要声明了就是常驻的，
+      直接给颜色等于在每屏右边挂一条常显的灰条（移动端很吵）。
+      平时看不见、`.is-scrolling`（JS 在滚动时加，见 components.js 的 watchScrollbars）
+      时才显现，停手后淡出。标准属性 `scrollbar-color` 没法做过渡，
+      所以那边给的是「平时也有一点」的 `--scrollbar-thumb`，
+      WebKit 内核（Android WebView / Chromium）走下面的透明 + 显现方案。
+*/
+*::-webkit-scrollbar-thumb {
+    background: transparent;
+    border-radius: calc(var(--scrollbar-size) / 2);
+    transition: background 180ms ease;
+}
+
+.is-scrolling {
+    scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+
+.is-scrolling::-webkit-scrollbar-thumb {
+    background: var(--scrollbar-thumb);
+}
+
+.is-scrolling::-webkit-scrollbar-thumb:active {
+    background: var(--scrollbar-thumb-active);
+}
+
+/* 明确要求不显示滚动条的地方 */
+.no-scrollbar {
     scrollbar-width: none;
 }
 
-*::-webkit-scrollbar {
+.no-scrollbar::-webkit-scrollbar {
     display: none;
     width: 0;
     height: 0;
@@ -1504,10 +1570,25 @@ body {
    下拉菜单
    -------------------------------------------------------------------------- */
 
+/*
+   下拉菜单（`update.js` 的更新菜单、`createRowPicker` 的选择菜单等都走这里）
+
+   ⚠️ 菜单**必须能滚**：选项多的时候（时区 26 项）整块会高过视口，
+      而菜单是 `position: fixed`、又没有滚动条 —— 超出去的部分永远点不到。
+      JS 会按 anchor 上下可用空间写一个 inline `max-height`，
+      这里只兜底 + 提供滚动。
+*/
 .menu {
     position: fixed;
     z-index: 20;
     min-width: 160px;
+    /* 上限由 JS 按 anchor 的上下空间算；这里是不依赖 JS 的兜底 */
+    max-height: calc(100dvh - 16px);
+    /*
+       ⚠️ 右侧 6px 内边距是给滚动条的：声明 `::-webkit-scrollbar` 后 Chromium
+          会预留一整条经典滚动条宽度（实测 11px），滑块就落在这一条里。
+          如果右边还按对称写 6px，滑块会贴到圆角上、看着像画歪了。
+    */
     padding: 6px;
     background: var(--surface);
     border: 1px solid var(--outline);
@@ -1517,6 +1598,23 @@ body {
     transform: translateY(-6px) scale(0.98);
     transform-origin: top right;
     transition: opacity 160ms ease, transform 160ms ease;
+
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+}
+
+/* 老引擎不认 dvh 时的兜底 */
+@supports not (height: 100dvh) {
+    .menu {
+        max-height: calc(100vh - 16px);
+    }
+}
+
+/* 向上翻转打开时，动画起点也跟着换到下方 */
+.menu.is-upward {
+    transform: translateY(6px) scale(0.98);
+    transform-origin: bottom right;
 }
 
 .menu.is-open {

@@ -7,6 +7,10 @@
     var ANIMATION_CLASSES = ['enter-forward', 'enter-backward'];
     var ANIMATION_MS = 260;
     var TRANSITION_MS = 220;
+    /** 菜单高度下限：万一上下都极窄，也保证能看见几项 + 能滚 */
+    var MIN_MENU_HEIGHT = 96;
+    /** 滚动条显现后，停止滚动多久淡出 */
+    var SCROLL_IDLE_MS = 700;
 
     var scrim = null;
     var currentSheet = null;
@@ -956,9 +960,42 @@
 
         var rect = anchor.getBoundingClientRect();
         var width = node.offsetWidth;
-        var left = Math.min(rect.right - width, global.innerWidth - width - 8);
-        node.style.left = Math.max(8, left) + 'px';
-        node.style.top = (rect.bottom + 6) + 'px';
+        /*
+           ⚠️ 位置必须**上下都算**，不能无脑挂在 anchor 下方。
+              以前只写 `top = rect.bottom + 6`，长菜单（时区 26 项、图标列表等）
+              会直接冲出视口底部，而 `.menu` 又没有滚动条 ——
+              下面那些选项**永远点不到**（用户抓到的 bug）。
+              现在的策略：优先下方；下方放不下就往上翻；上下都放不下时，
+              挑空间大的一侧，高度由 CSS 的 `max-height` 截住并出现滚动。
+        */
+        var MARGIN = 8;
+        var GAP = 6;
+        var below = global.innerHeight - rect.bottom - GAP - MARGIN;
+        var above = rect.top - GAP - MARGIN;
+
+        /*
+           ⚠️ 这里量的是**内容完整高度**（还没被 `max-height` 截），
+              所以要先把上一轮的 inline 高度清掉再量，否则第二次打开会拿到旧值。
+        */
+        node.style.maxHeight = '';
+        var natural = node.offsetHeight;
+
+        var openUp = false;
+        if (natural > below && above > below) {
+            openUp = true;
+        }
+
+        var available = Math.max(openUp ? above : below, MIN_MENU_HEIGHT);
+        node.style.maxHeight = available + 'px';
+
+        var left = Math.min(rect.right - width, global.innerWidth - width - MARGIN);
+        node.style.left = Math.max(MARGIN, left) + 'px';
+        node.style.top = (openUp
+            ? rect.top - GAP - Math.min(natural, available)
+            : rect.bottom + GAP) + 'px';
+
+        // 箭头/圆角方向跟着翻转方向走，别让菜单看起来「从下面长出来」
+        node.classList.toggle('is-upward', openUp);
 
         global.requestAnimationFrame(function () {
             node.classList.add('is-open');
@@ -1252,6 +1289,43 @@
                 closeSheet();
             }
         });
+
+        watchScrollbars();
+    }
+
+    /**
+     * 滚动条「用时显现、闲时淡出」。
+     *
+     * ⚠️ 为什么要这么绕：`::-webkit-scrollbar` 一旦声明样式就会变成**常驻**，
+     *    在移动端窄屏上一条 4px 的滑块从头到尾贴在右边很吵（用户明确否过一次）。
+     *    但完全不画又不行 —— 菜单这种「下面还有好几项」的容器没提示，用户会以为丢了。
+     *    折中做法：默认透明，**正在滚动时**加 `.is-scrolling` 显现，停手后淡出。
+     *
+     * 用**事件委托**挂在 `document` 上（捕获阶段拿 scroll，因为 scroll 不冒泡），
+     * 这样后续动态插入的容器（菜单、图标面板…）自动生效，不用一个个注册。
+     */
+    function watchScrollbars() {
+        var timers = new WeakMap();
+
+        var reveal = function (node) {
+            if (!node || node.nodeType !== 1) {
+                return;
+            }
+            // 只在「内容确实超出、真的能滚」时才显现，内容少的容器不闪一下
+            if (node.scrollHeight <= node.clientHeight + 1 &&
+                node.scrollWidth <= node.clientWidth + 1) {
+                return;
+            }
+            node.classList.add('is-scrolling');
+            global.clearTimeout(timers.get(node));
+            timers.set(node, global.setTimeout(function () {
+                node.classList.remove('is-scrolling');
+            }, SCROLL_IDLE_MS));
+        };
+
+        document.addEventListener('scroll', function (event) {
+            reveal(event.target === document ? document.documentElement : event.target);
+        }, true);
     }
 
     global.LivologUI = {
