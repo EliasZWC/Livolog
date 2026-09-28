@@ -662,8 +662,12 @@
                 return typeValue;
             },
             onChange: function (value) {
-                // 换类型时把已填的时间带过去，别让用户重填
-                var seed = currentSeed();
+                /*
+                   ⚠️ 用 seedForNewType 而不是 currentSeed()：跨类型必须丢弃旧时间。
+                      时段默认「开始 = 1 小时前」，照搬到时点上会让「发生时间」
+                      变成 1 小时前（用户报的就是这个）。
+                */
+                var seed = seedForNewType(value);
                 typeValue = value;
                 buildTimeFields(seed);
             },
@@ -718,8 +722,15 @@
             return;
         }
 
+        /*
+           ⚠️ 换行为可能顺带换类型（按这个行为的习惯预选）。
+              只要类型变了就**不要**沿用上一个行为的时间，否则会串味：
+              上一个行为是时段（默认开始 = 1 小时前）时，切到一个时点行为后
+              「发生时间」就成了 1 小时前，而不是「现在」。
+        */
+        var seed = seedForNewType(preferred);
         typeValue = preferred;
-        buildTimeFields(currentSeed());
+        buildTimeFields(seed);
         typeSelect.refresh();
     }
 
@@ -740,6 +751,18 @@
         return { start: start, end: end };
     }
 
+    /**
+     * 换行为时要不要沿用上一份时间？
+     *
+     * ⚠️ 只有**同类型之间**才沿用。跨类型沿用会串味：
+     *    时段（Period）默认「开始 = 1 小时前」，切到另一个时点（Moment）行为时
+     *    如果照搬这个 seed，时点记录的「发生时间」就被填成 1 小时前，
+     *    而不是用户期望的「现在」。所以跨类型时**丢弃**旧时间，走各自类型的默认值。
+     */
+    function seedForNewType(nextType) {
+        return nextType === typeValue ? currentSeed() : null;
+    }
+
     /** 类型决定时间怎么填：选之前第三行不可填写 */
     function buildTimeFields(seed) {
         fieldsEl.innerHTML = '';
@@ -750,10 +773,11 @@
         var endAt = now;
 
         if (seed && seed.start !== null) {
-            // 编辑 / 切类型：沿用已有时间
+            // 编辑 / 同类型切换：沿用已有时间
             startAt = seed.start;
             endAt = seed.end !== null ? seed.end : seed.start;
         } else if (typeValue === 'period') {
+            // 时段的默认跨度是「最近一小时」；时点（moment）用当前时间，见上方的 startAt = now
             startAt = now - 60 * 60 * 1000;
         }
 
