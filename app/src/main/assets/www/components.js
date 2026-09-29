@@ -906,6 +906,27 @@
         }
     }
 
+    /**
+     * 页面滚动时收起菜单（菜单是 `position: fixed`，不跟着滚，留着会飘在错位置）。
+     *
+     * ⚠️⚠️ 必须判断滚动来源，不能无条件 `closeMenu`（v0.1.27 修的 bug）：
+     *    监听挂在 `window` 的**捕获**阶段，而 scroll 事件虽然不冒泡、却会在
+     *    捕获阶段经过 window —— 于是**菜单自己内部滚动**也会触发这个回调，
+     *    结果是「时区列表一滑就整块消失」（用户报的 bug）。
+     *    菜单能滚是刚需（27 项放不下），所以这里只对**菜单之外**的滚动做收起。
+     */
+    function onDocumentScroll(event) {
+        if (!menuEl) {
+            return;
+        }
+        var target = event.target;
+        if (target === document || target === global ||
+            (target && menuEl.contains(target))) {
+            return;   // 菜单自己的滚动（或无法判定来源）→ 不动它
+        }
+        closeMenu();
+    }
+
     function closeMenu() {
         if (!menuEl) {
             return;
@@ -916,7 +937,7 @@
 
         node.classList.remove('is-open');
         document.removeEventListener('pointerdown', onDocumentPointerDown, true);
-        global.removeEventListener('scroll', closeMenu, true);
+        global.removeEventListener('scroll', onDocumentScroll, true);
 
         global.setTimeout(function () {
             if (node.parentNode) {
@@ -1003,7 +1024,7 @@
 
         global.setTimeout(function () {
             document.addEventListener('pointerdown', onDocumentPointerDown, true);
-            global.addEventListener('scroll', closeMenu, true);
+            global.addEventListener('scroll', onDocumentScroll, true);
         }, 0);
     }
 

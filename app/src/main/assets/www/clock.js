@@ -218,25 +218,31 @@
     }
 
     /**
-     * 某个日期（该时区下的年月日）所属周的**周一日期**的绝对时刻。
+     * 某个日期（该时区下的年月日）所属周的**首日**的绝对时刻。
      *
-     * 周编号用 ISO 的「周一为一周之首」来算 ——
-     * 这样跨月跨年相邻的两天，周编号的差就恰好等于真实周差，
-     * 不需要额外处理月份/年份边界。
-     * @returns {number} 该周周一的零点（绝对时刻）
+     * ⚠️ 一周从哪天开始**跟随设置**（`getWeekStart()`：0 = 周日 / 1 = 周一）。
+     *    用户 2026-09-29 明确：「更改起始时间就是在更改自然周的定义」。
+     *
+     *    这里以前固定按 ISO 的「周一为一周之首」算，注释里当时的顾虑是
+     *    「换成周日起始后同一条记录会从 W4 跳到 W5，看起来像记录跑到了别的周」。
+     *    但那本来就是正确的行为 —— 重新定义自然周，边界当然会移动。
+     *    （v0.1.20 那条「周分组固定按周一切」的决定已被本次推翻。）
+     *
+     * 用「首日日期」而不是 ISO 周号做 key：跨年时周号会跳，
+     * 相邻两周还要比较年份，容易出错。
+     * @returns {number} 该周首日的零点（绝对时刻）
      */
     function weekStartOf(timestamp) {
         var day = startOfDay(timestamp);
-        // 距周一的偏移：周日是 0 → 6，其余 n → n-1
+        // 距「一周首日」要往回退几天
         var weekday = parts(day).weekday;
-        var backToMonday = (weekday + 6) % 7;
-        return day - backToMonday * 86400000;
+        var start = firstWeekdayIndex();
+        var back = (weekday - start + 7) % 7;
+        return day - back * 86400000;
     }
 
     /**
-     * 稳定且单调的周分组键（`YYYY-MM-DD` 形式的周一首日）。
-     * 用周一首日的日期而不是 ISO 周号：跨年时周号会跳，
-     * 相邻两周还要比较年份，容易出错。
+     * 稳定且单调的周分组键（`YYYY-MM-DD` 形式的**周首日**）。
      */
     function weekKey(timestamp) {
         return formatDate(weekStartOf(timestamp));
@@ -252,17 +258,17 @@
     }
 
     /**
-     * 把该周（周一为基准）的 7 天，按用户设置的起始日重排。
-     * @returns {Array<{weekday:number, offset:number}>} offset 是距周一的**天数**
-     *          （可能是负数收尾，见下行注释），顺序就是用户要的展示顺序
+     * 该周 7 天的**展示顺序**（weekday 编号），从设置的「一周首日」开始。
+     *
+     * ⚠️ 现在分组本身已经跟随 `weekStart`（见 `weekStartOf`），
+     *    所以这个顺序与 `weekStartOf` 算出的边界是**自洽**的：
+     *    第一项就是该周的首日。列表若要按天排，用它即可。
+     * @returns {Array<number>} 7 个 weekday 编号（0 = 周日）
      */
     function weekDaysOf() {
-        // 周一 ~ 周日 的 weekday 编号，再整体旋转到用户选的起始日
-        var order = [1, 2, 3, 4, 5, 6, 0];
-        var start = firstWeekdayIndex();
-        var at = order.indexOf(start);
-        var rotated = order.slice(at).concat(order.slice(0, at));
-        return rotated.map(function (weekday) { return { weekday: weekday }; });
+        var order = [0, 1, 2, 3, 4, 5, 6];
+        var at = firstWeekdayIndex();
+        return order.slice(at).concat(order.slice(0, at));
     }
 
     global.LivologClock = {
