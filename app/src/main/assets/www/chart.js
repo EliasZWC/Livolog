@@ -68,14 +68,34 @@
     }
 
     /**
+     * 横轴刻度文案。
+     *
+     * ⚠️ 两种横轴：
+     *    - `day`（默认）：`day` 是时间戳 → 走 `dateLabel`（`9-20`）或 `axisLabel`
+     *    - `hour`：`day` 其实是 0-23 的**小时序号**，不能传给 `dateLabel`
+     *      （否则会被当成 1970 年的某个时间戳，标出莫名其妙的日期）。
+     */
+    function axisTickLabel(value, axis, axisLabel) {
+        if (axisLabel) {
+            return axisLabel(value);
+        }
+        return axis === 'hour' ? value + ':00' : dateLabel(value);
+    }
+
+    /**
      * @param {Array<{day: number, value: number, has: boolean}>} points 按时间升序，每个点代表一天
-     * @param {{type?: 'bar'|'line', format?: (value: number) => string}} [options]
+     * @param {{type?: 'bar'|'line', axis?: 'day'|'hour',
+     *          axisLabel?: (v:number)=>string,
+     *          dayFormat?: (v:number)=>string,
+     *          format?: (value: number) => string}} [options]
      *        format 决定「点某一天时气泡里显示的文案」（默认取整数值）
      * @returns {SVGElement}
      */
     function build(points, options) {
         var list = points && points.length ? points : [{ day: Date.now(), value: 0, has: false }];
         var type = options && options.type === 'line' ? 'line' : 'bar';
+        var axis = (options && options.axis) || 'day';
+        var axisLabel = options && options.axisLabel;
 
         var plotW = WIDTH - PAD_X - PAD_X;
         var plotH = HEIGHT - PAD_TOP - PAD_BOTTOM;
@@ -145,7 +165,7 @@
             });
         }
 
-        // 横轴只标「首 / 中 / 尾」三处日期，避免挤成一团
+        // 横轴只标「首 / 中 / 尾」三处刻度，避免挤成一团
         [0, Math.floor((list.length - 1) / 2), list.length - 1]
             .filter(function (value, index, array) {
                 return array.indexOf(value) === index;
@@ -157,7 +177,7 @@
                 parts.push(
                     '<text class="chart-tick" x="' + centerX(index).toFixed(1) + '" y="' +
                     (baseY + 17) + '" text-anchor="' + anchor + '">' +
-                    dateLabel(list[index].day) + '</text>'
+                    axisTickLabel(list[index].day, axis, axisLabel) + '</text>'
                 );
             });
 

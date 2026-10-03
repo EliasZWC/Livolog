@@ -41,8 +41,13 @@
 
     var DAY_MS = 24 * 60 * 60 * 1000;
 
-    /** 统计视图的选项：图类型 + 统计区间；每次打开详情页重置 */
-    var stats = { chartType: 'bar', range: null };
+    /**
+     * 统计视图的选项：统计类型 + 图类型 + 统计区间；每次打开详情页重置。
+     * ⚠️ `metric` 是 `LivologStats` 注册表里的 id（见 stats.js 的 METRICS）。
+     *    默认 duration（每日时长），但**旧行为只有时点记录时自动改用 count** ——
+     *    否则一进去就是一排 0 的柱，看着像坏了。
+     */
+    var stats = { metric: 'duration', chartType: 'bar', range: null };
 
     function t(key) {
         return global.LivologI18n ? global.LivologI18n.t(key) : key;
@@ -87,8 +92,18 @@
             global.LivologI18n.onChange(refresh);
         }
 
-        // 系统返回键 / 手势返回会触发 popstate，等价于点左上角返回
+        /*
+           系统返回键 / 手势返回会触发 popstate。
+           ⚠️ 先让**通用返回层**消化（下拉菜单 / 弹窗 / 图标选择器 / 多选栏），
+              它们可能正压在详情页上面；直接关详情页会把用户正在操作的弹窗
+              一并收掉，还会把历史记录多退一格。
+        */
         global.addEventListener('popstate', function () {
+            if (global.LivologUI.handleBack()) {
+                // 刚关掉的是覆盖在详情页上的一层，把历史记录补回来
+                global.history.pushState({ livologBehavior: currentId }, '');
+                return;
+            }
             if (isOpen) {
                 close({ history: false });
             }
@@ -106,7 +121,7 @@
         currentId = id;
         currentView = DEFAULT_VIEW;
         range = 'all';
-        stats = { chartType: 'bar', range: null };
+        stats = { metric: 'duration', chartType: 'bar', range: null };
 
         // 这一页自己当多选目标（长按卡片 → 顶部操作栏 → 删除）
         global.LivologUI.bindSelection(selection);
@@ -374,27 +389,23 @@
             }
         });
 
-        // 有「时段」记录才画时长；否则退化为按天记次数
-        var useDuration = totalMs > 0;
+        /*
+           自动纠偏：这个行为**一条时段记录都没有**（totalMs 为 0）时，
+           「每日时长」「平均单次时长」这两个选项全是 0，看着像图表坏了。
+           默认从 duration 改成 count。
+           ⚠️ 只在用户没手动选过、且当前恰好是 duration 时才改 ——
+              用户主动选了 duration 就尊重他的选择（他可能正要记录时段）。
+        */
+        var hasDuration = totalMs > 0;
+        if (!hasDuration && stats.metric === 'duration' && !stats.metricPicked) {
+            stats.metric = 'count';
+        }
 
-        var spans = records.map(function (record) {
-            if (!useDuration) {
-                return { start: record.start, end: null, value: 1 };
-            }
-            if (record.type === 'period' && record.end !== null) {
-                return {
-                    start: record.start,
-                    end: record.end,
-                    value: Math.max(0, record.end - record.start) / 60000
-                };
-            }
-            // 时长模式下时点不占时长，但那一天要算作有数据
-            return { start: record.start, end: null, value: 0 };
-        });
-
-        // ⚠️ 必须用 bucketSpans：跨天的时段要按实际跨过的时长分摊到每一天，
-        // 用 bucketByDay 会把 23:00 → 07:00 整段算在开始那天。
-        var points = global.LivologChart.bucketSpans(spans, range);
+        // 注册表负责聚合：横轴可能是日期，也可能是 0-23 点（每小时分布）
+        var aggregated = global.LivologStats.metric(stats.metric)
+            .aggregate(records, range, global.LivologChart);
+        var points = aggregated.points;
+        // ⚠️ 「按天平均」的分母是**区间天数**，与 points 长度一致
         var days = points.length;
 
         var wrap = global.LivologUI.el('li', 'stats');
@@ -403,12 +414,19 @@
             getChartType: function () {
                 return stats.chartType;
             },
+            getMetric: function () {
+                return stats.metric;
+            },
             getRange: function () {
                 return stats.range;
             },
             onChange: function (key, value) {
                 if (key === 'chartType') {
                     stats.chartType = value;
+                } else if (key === 'metric') {
+                    stats.metric = value;
+                    // 记下「用户主动选过」，之后不再被自动纠偏覆盖
+                    stats.metricPicked = true;
                 } else {
                     stats.range = normalizeRange(stats.range, key, value);
                 }
@@ -417,24 +435,32 @@
         });
         wrap.appendChild(toolbar.root);
 
+        // 值的格式化：按注册表给出的单位来（时长 → 可读时长；次数 → 整数）
+        var format = aggregated.unit === 'duration'
+            ? function (minutes) {
+                return formatDuration(minutes * 60000);
+            }
+            : function (times) {
+                return String(Math.round(times));
+            };
+        // 气泡第一行：小时分布时显示「N 点」，否则显示日期
+        var dayFormat = aggregated.axis === 'hour'
+            ? function (hour) {
+                return t('stats.hourLabel').replace('{h}', String(hour));
+            }
+            : global.LivologChart.fullDateLabel;
+
         var chartBlock = global.LivologUI.el('div', 'stats-chart');
         chartBlock.appendChild(global.LivologUI.el(
             'span',
             'stats-chart-title',
-            t(useDuration ? 'behavior.detail.chartDuration' : 'behavior.detail.chartCount')
+            t(global.LivologStats.metric(stats.metric).label)
         ));
         chartBlock.appendChild(global.LivologChart.build(points, {
             type: stats.chartType,
-            // 气泡第一行是哪一天，下面才是可读的时长 / 次数
-            dayFormat: global.LivologChart.fullDateLabel,
-            // 点某一天时气泡里显示的是可读的时长 / 次数
-            format: useDuration
-                ? function (minutes) {
-                    return formatDuration(minutes * 60000);
-                }
-                : function (times) {
-                    return String(Math.round(times));
-                }
+            axis: aggregated.axis,
+            dayFormat: dayFormat,
+            format: format
         }));
         wrap.appendChild(chartBlock);
 

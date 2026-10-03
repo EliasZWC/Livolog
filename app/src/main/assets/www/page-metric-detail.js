@@ -175,7 +175,16 @@
         }
 
         // 系统返回键 / 手势返回等价于点左上角返回
+        /*
+           系统返回键 / 手势返回会触发 popstate。
+           ⚠️ 先让**通用返回层**消化（下拉菜单 / 弹窗 / 图标选择器 / 多选栏），
+              它们可能正压在详情页上面。
+        */
         global.addEventListener('popstate', function () {
+            if (global.LivologUI.handleBack()) {
+                global.history.pushState({ livologMetric: currentId }, '');
+                return;
+            }
             if (isOpen) {
                 close({ history: false });
             }
@@ -599,6 +608,19 @@
             },
             getRange: function () {
                 return stats.range;
+            },
+            /*
+               ⚠️ 跟踪统计**只有一种统计类型**：「每次记录的值」。
+                  所以显式传一个单元素列表 —— 选项栏据此**不显示**「统计类型」那一行
+                  （`availableMetrics.length > 1` 才显示），
+                  也顺便避免注册表里新增类型时这里跟着冒出一堆不适用的选项
+                  （时长 / 次数那套对跟踪数据没有意义）。
+            */
+            getMetric: function () {
+                return 'value';
+            },
+            getMetricIds: function () {
+                return ['value'];
             },
             // 统一用折线图，所以不再给「图类型」这一行
             lockChartType: true,

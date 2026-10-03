@@ -16,6 +16,91 @@
     var currentSheet = null;
     var menuEl = null;
     var checklistScrim = null;
+    var iconPickerPanel = null;
+
+    /*
+       ------------------------------------------------------------------------
+       返回键处理（v0.1.28）
+
+       ⚠️ 为什么需要这一套：app 是个单页应用，详情页 / 弹窗 / 菜单都不是新的 URL，
+          所以原生那边的 `webView.canGoBack()` 大多为 false，按返回键会**直接退出 app**
+          （用户报的 bug）。详情页虽然 `pushState` 了、能靠 `popstate` 兜住，
+          但弹窗、下拉菜单、图标选择器、多选栏这些**都没有**历史记录，
+          系统返回键对它们完全无效。
+
+       做法：在这里登记「可关闭的层」，原生返回键统一问 `LivologUI.handleBack()`：
+         - 返回 true  = 网页自己消化掉了（关掉了某一层），原生别退
+         - 返回 false = 网页没有可关的层了，原生按原逻辑退出 / 走历史
+
+       顺序按「视觉上最上面的一层优先」：图标选择器 → 下拉菜单 → 弹窗 → 多选栏。
+       ⚠️ 顺序就是优先级，改动前先想清楚谁盖在谁上面。
+    */
+    function backLayers() {
+        return [
+            {
+                // 图标选择器是居中模态（z-index 22），比弹窗还高
+                active: function () { return !!iconPickerPanel; },
+                close: function () { iconPickerPanel.close(); }
+            },
+            {
+                // 下拉菜单挂在 body 上（z-index 20）
+                active: function () { return !!menuEl; },
+                close: closeMenu
+            },
+            {
+                active: function () { return !!checklistScrim; },
+                close: closeChecklist
+            },
+            {
+                // 底部弹窗 + 遮罩（z-index 11 / 10）
+                active: function () { return !!currentSheet; },
+                close: closeSheet
+            },
+            {
+                // 长按多选的操作栏（z-index 7）
+                active: function () { return selection.active; },
+                close: clearSelection
+            }
+        ];
+    }
+
+    /**
+     * 把「有没有可关闭的层」推给原生。
+     *
+     * ⚠️ 原生返回键的处理是**同步**的（它得当场决定是消化掉还是退出 app），
+     *    而 `evaluateJavascript` 是异步的、来不及，所以改成**由网页主动上报**，
+     *    原生只读缓存。每次开/关层都要调这个，别只在打开时调。
+     */
+    function reportBackLayer() {
+        try {
+            if (global.LivologNative && typeof global.LivologNative.setBackLayer === 'function') {
+                global.LivologNative.setBackLayer(hasBackLayer());
+            }
+        } catch (e) {
+            /* 浏览器预览环境没有这个桥，忽略 */
+        }
+    }
+
+    /**
+     * 系统返回键的统一入口。
+     * @returns {boolean} true = 已关闭某一层，调用方不要再退
+     */
+    function handleBack() {
+        var layers = backLayers();
+        for (var i = 0; i < layers.length; i++) {
+            if (layers[i].active()) {
+                layers[i].close();
+                reportBackLayer();
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** 有没有任何可关闭的层（原生可用来决定返回键行为，避免误退） */
+    function hasBackLayer() {
+        return backLayers().some(function (layer) { return layer.active(); });
+    }
 
     // --- DOM 小工具 ---------------------------------------------------------
 
@@ -558,6 +643,9 @@
             place();
             scrim.hidden = false;
             panel.hidden = false;
+            // 登记到返回键栈上（见 handleBack）
+            iconPickerPanel = { close: close };
+            reportBackLayer();
             // 每次打开都清掉上次的搜索词，回到分类视图
             searchInput.value = '';
             setQuery('');
@@ -580,6 +668,8 @@
             panel.hidden = true;
             panel.classList.remove('is-open');
             trigger.setAttribute('aria-expanded', 'false');
+            iconPickerPanel = null;
+            reportBackLayer();
         }
 
         function select(name) {
@@ -862,6 +952,7 @@
         currentSheet = sheet;
         scrim.hidden = false;
         sheet.hidden = false;
+        reportBackLayer();
 
         global.requestAnimationFrame(function () {
             scrim.classList.add('is-open');
@@ -872,6 +963,7 @@
     function closeSheet() {
         hideSheet(currentSheet, false);
         currentSheet = null;
+        reportBackLayer();
     }
 
     function hideSheet(sheet, immediate) {
@@ -934,6 +1026,7 @@
 
         var node = menuEl;
         menuEl = null;
+        reportBackLayer();
 
         node.classList.remove('is-open');
         document.removeEventListener('pointerdown', onDocumentPointerDown, true);
@@ -978,6 +1071,7 @@
 
         document.body.appendChild(node);
         menuEl = node;
+        reportBackLayer();
 
         var rect = anchor.getBoundingClientRect();
         var width = node.offsetWidth;
@@ -1135,6 +1229,7 @@
         // 挂在 #app 上：position: fixed 会被 .page 的 overflow 裁掉
         (document.getElementById('app') || document.body).appendChild(scrim);
         checklistScrim = scrim;
+        reportBackLayer();
 
         syncAll();
 
@@ -1158,6 +1253,7 @@
         }
         var node = checklistScrim;
         checklistScrim = null;
+        reportBackLayer();
         node.classList.remove('is-open');
         global.setTimeout(function () {
             if (node.parentNode) {
@@ -1233,6 +1329,7 @@
         updateSelectionCount();
         openSelectionBar();
         notifySelection();
+        reportBackLayer();
     }
 
     function toggleSelection(id) {
@@ -1264,6 +1361,7 @@
             closeSelectionBar();
         }
         notifySelection();
+        reportBackLayer();
     }
 
     function deleteSelected() {
@@ -1273,6 +1371,7 @@
         selection.active = false;
         selection.ids = [];
         closeSelectionBar();
+        reportBackLayer();
 
         if (provider && provider.onDelete) {
             provider.onDelete(ids);
@@ -1312,6 +1411,13 @@
         });
 
         watchScrollbars();
+
+        /*
+           告诉原生「当前没有可关闭的层」。
+           ⚠️ 必须上报一次初始状态：页面可能是在某个层展开时被重载的
+              （比如渲染进程被回收后重建），原生的缓存值会停在旧状态。
+        */
+        reportBackLayer();
     }
 
     /**
@@ -1380,6 +1486,10 @@
         isSelected: isSelected,
         startSelection: startSelection,
         toggleSelection: toggleSelection,
-        clearSelection: clearSelection
+        clearSelection: clearSelection,
+        // 返回键：原生查这个（同步），也直接调 handleBack 关闭最上面那层
+        handleBack: handleBack,
+        hasBackLayer: hasBackLayer,
+        reportBackLayer: reportBackLayer
     };
 })(window);

@@ -74,6 +74,17 @@ class MainActivity : AppCompatActivity() {
     private var lastLoadAt = 0L
 
     /**
+     * 网页当前**有没有需要返回键关掉的层**（底部表单 / 下拉菜单 / 图标选择器 / 多选栏）。
+     *
+     * ⚠️ 为什么要缓存这个布尔值，而不是每次评估一段 JS 拿结果：
+     *    `evaluateJavascript` 是异步的，而返回键的处理必须**同步**决定「消化掉还是退出」。
+     *    所以由网页在每次开/关层时主动把状态推过来（见 [WebAppBridge.setBackLayer]），
+     *    原生只读这个缓存值。
+     * ⚠️ 初始为 false：页面刚加载时没有任何层，此时返回键应该按历史 / 退出处理。
+     */
+    private var webHasBackLayer = false
+
+    /**
      * 网页的启动动画还在演（或还没结束）时为 true。
      * 这段时间窗口底色与系统栏图标一律按「品牌黑」处理，等网页通知再切回主题色，
      * 否则白天主题下会在黑色启动页上面看到一排深色状态栏图标。
@@ -230,15 +241,52 @@ class MainActivity : AppCompatActivity() {
             insets
         }
 
-        // 返回键优先让网页回退历史
-        onBackPressedDispatcher.addCallback(this) {
-            if (::webView.isInitialized && webView.canGoBack()) {
-                webView.goBack()
-            } else {
-                isEnabled = false
-                onBackPressedDispatcher.onBackPressed()
-            }
+        /*
+           返回键的处理顺序（v0.1.28 重写）：
+
+           ⚠️ 以前只判断 `webView.canGoBack()`，但这是个**单页应用**：详情页之外的
+              所有层（底部表单、下拉菜单、图标选择器、多选栏）都不产生历史记录，
+              所以 canGoBack() 为 false → 直接 finish()，按返回键**直接退出 app**
+              （用户报的 bug）。
+
+           现在的顺序：
+             1. 先问网页「有没有需要关掉的层」→ 有就让网页关掉（它自己知道顺序）
+             2. 没有可关的层时，再看能不能回退浏览历史（详情页 pushState 的）
+             3. 都没有才真的退出
+
+           ⚠️ 第 1 步不能省：网页里弹窗可能正压在详情页上，此时 canGoBack() 是 true，
+              若先走 goBack() 会触发 popstate、把弹窗和详情页一起关掉。
+        */
+        onBackPressedDispatcher.addCallback(this) { dismissWebLayerOrExit() }
+    }
+
+    /**
+     * 返回键：先让网页关掉最上面那层，再考虑历史，最后才退出。
+     * ⚠️ `evaluateJavascript` 是**异步**的，回调还没回来时返回键就按完了，
+     *    所以这里不能把「是否退出」写成同步判断，而是：
+     *    先**同步**取一次缓存状态（由网页每次开/关层时主动推送），
+     *    拿不到缓存再回退到同步的 canGoBack() 判断。
+     */
+    private fun dismissWebLayerOrExit() {
+        if (!::webView.isInitialized) {
+            isEnabled = false
+            onBackPressedDispatcher.onBackPressed()
+            return
         }
+
+        if (webHasBackLayer) {
+            // 让网页关掉最上面那层；它会在关完后把新状态推回来
+            webView.evaluateJavascript("window.LivologUI && window.LivologUI.handleBack()", null)
+            return
+        }
+
+        if (webView.canGoBack()) {
+            webView.goBack()
+            return
+        }
+
+        isEnabled = false
+        onBackPressedDispatcher.onBackPressed()
     }
 
     /** 加载入口页，并记下时刻（自愈逻辑靠它做节流） */
@@ -361,6 +409,8 @@ class MainActivity : AppCompatActivity() {
                 onInstallUpdate = { runOnUiThread { installDownloaded() } },
                 onCloseUpdate = { runOnUiThread { closeUpdateFlow() } },
                 onFinishSplash = { runOnUiThread { finishSplash() } },
+                // 返回键要同步判断，所以把这个状态缓存下来（见 dismissWebLayerOrExit）
+                onBackLayerChanged = { has -> runOnUiThread { webHasBackLayer = has } },
             ),
             JS_BRIDGE_NAME,
         )

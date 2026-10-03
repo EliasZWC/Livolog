@@ -21,6 +21,7 @@ class WebAppBridge(
     private val onInstallUpdate: () -> Unit,
     private val onCloseUpdate: () -> Unit,
     private val onFinishSplash: () -> Unit,
+    private val onBackLayerChanged: (Boolean) -> Unit,
 ) {
 
     @JavascriptInterface
@@ -89,5 +90,17 @@ class WebAppBridge(
     @JavascriptInterface
     fun finishSplash() {
         onFinishSplash()
+    }
+
+    /**
+     * 网页里「可被返回键关掉的层」数量/存在性变了。
+     *
+     * ⚠️ 返回键的处理必须是**同步**的，而 `evaluateJavascript` 是异步的，
+     *    所以由网页在每次开/关底部表单、下拉菜单、图标选择器、多选栏时主动推过来，
+     *    原生缓存起来供 [MainActivity.dismissWebLayerOrExit] 同步读取。
+     */
+    @JavascriptInterface
+    fun setBackLayer(has: Boolean) {
+        onBackLayerChanged(has)
     }
 }

@@ -12,7 +12,7 @@ by year, month, and week, with charts for each behavior and tracker.
 
 | | |
 | --- | --- |
-| Latest version | **v0.1.27** |
+| Latest version | **v0.1.28** |
 | App name | Livolog |
 | Package | `com.eliaszwc.livolog` |
 | Requires | Android 8.0 (API 26) or newer |
@@ -59,9 +59,10 @@ which is why they never show up on the Time page.
 
 ### Statistics
 
-Every behavior and every tracker has a detail page with a chart. Pick between bars and a line, choose the
-time range, and tap any point to read the exact value. Trackers with several fields let you choose which
-field to plot, or show them all at once on one chart.
+Every behavior and every tracker has a detail page with a chart. Choose what to plot — time per day,
+count per day, average per time, each duration, or the distribution across the hours of the day —
+then pick bars or a line and the time range. Tap any point to read the exact value. Trackers with
+several fields let you choose which field to plot, or show them all at once on one chart.
 
 Summary figures sit under the chart: total time, number of records, averages, and so on.
 
@@ -137,8 +138,8 @@ python -m http.server 8000
 The version is defined in exactly one place — `app/build.gradle.kts`:
 
 ```kotlin
-val appVersionCode = 48
-val appVersionName = "0.1.27"
+val appVersionCode = 49
+val appVersionName = "0.1.28"
 ```
 
 Bump both, update `CHANGELOG.md`, push to `main`, then push a matching `vX.Y.Z` tag. The release workflow
@@ -280,6 +281,7 @@ system. The app detects this and rebuilds the view automatically; if it keeps ha
 - [x] Time Zone and Week Start settings
 - [x] Collapsible descriptions with an expand indicator
 - [x] Scrollbars in the app's own style
+- [x] Selectable statistic type (time, count, average, each, hourly distribution)
 - [ ] Editing cards
 - [ ] A dedicated statistics page
 
