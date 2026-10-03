@@ -257,36 +257,46 @@ class MainActivity : AppCompatActivity() {
            ⚠️ 第 1 步不能省：网页里弹窗可能正压在详情页上，此时 canGoBack() 是 true，
               若先走 goBack() 会触发 popstate、把弹窗和详情页一起关掉。
         */
-        onBackPressedDispatcher.addCallback(this) { dismissWebLayerOrExit() }
+        onBackPressedDispatcher.addCallback(this) {
+            if (!dismissWebLayerOrExit()) {
+                /*
+                   ⚠️ 必须**先** `isEnabled = false` 再调 `onBackPressed()`：
+                      否则 onBackPressed 会重新走到这个回调（因为它还是 enabled），
+                      形成无限递归。这是 AndroidX 的标准写法，别删。
+                */
+                isEnabled = false
+                onBackPressedDispatcher.onBackPressed()
+            }
+        }
     }
 
     /**
-     * 返回键：先让网页关掉最上面那层，再考虑历史，最后才退出。
+     * 返回键：先让网页关掉最上面那层，再考虑历史。
+     *
      * ⚠️ `evaluateJavascript` 是**异步**的，回调还没回来时返回键就按完了，
-     *    所以这里不能把「是否退出」写成同步判断，而是：
-     *    先**同步**取一次缓存状态（由网页每次开/关层时主动推送），
-     *    拿不到缓存再回退到同步的 canGoBack() 判断。
+     *    所以这里不能把「是否消化掉」写成异步判断，而是：
+     *    先**同步**读一次缓存状态（由网页每次开/关层时主动推送，见
+     *    [WebAppBridge.setBackLayer]），拿不到才回退到同步的 `canGoBack()`。
+     *
+     * ⚠️ 返回 true 表示「已经消化掉这次返回」，调用方不要再退出；
+     *    返回 false 表示网页和历史的辙都用尽了，可以退出 app 了。
+     *    （不能在这里直接 `onBackPressed()` —— 会递归回自己的回调。）
      */
-    private fun dismissWebLayerOrExit() {
-        if (!::webView.isInitialized) {
-            isEnabled = false
-            onBackPressedDispatcher.onBackPressed()
-            return
-        }
+    private fun dismissWebLayerOrExit(): Boolean {
+        if (!::webView.isInitialized) return false
 
         if (webHasBackLayer) {
             // 让网页关掉最上面那层；它会在关完后把新状态推回来
             webView.evaluateJavascript("window.LivologUI && window.LivologUI.handleBack()", null)
-            return
+            return true
         }
 
         if (webView.canGoBack()) {
             webView.goBack()
-            return
+            return true
         }
 
-        isEnabled = false
-        onBackPressedDispatcher.onBackPressed()
+        return false
     }
 
     /** 加载入口页，并记下时刻（自愈逻辑靠它做节流） */
